@@ -1,0 +1,134 @@
+---
+title: "Severe Weather Affect on Public Health and the Economy"
+author: "Wayne Vest"
+date: "25 April 2015"
+output: html_document
+---
+
+# Synopsis
+
+Put text here
+
+# Enironment Preparation
+
+The following packages are used in this analysis:
+
+- dplyr
+- ggplot2
+
+```{r environment_prep}
+# Check if dplyr is installed, and if not, install it
+if(!("dplyr" %in% rownames(installed.packages()))){
+    install.packages("dplyr")
+}
+# Load the dplyr library
+require(dplyr)
+
+# Check if the ggplot2 package is installed, and if not, install it
+if(!("ggplot2" %in% rownames(installed.packages()))){
+    install.packages("ggplot2r")
+}
+# Load the ggplot2 library
+require(ggplot2)
+```
+
+# Data Processing
+
+The data used in this analysis is available from `https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2` at the time of writing.
+
+To import the data a temporary file is created, the bzipped file is downloaded to that temporary file location, then the temporary file is un-bzipped and loaded into memory as `raw_data`. This processes is cached to prevent proliferation of sizeable temporary files.
+
+```{r load_and_process_data, cache=TRUE}
+# Create temporary file in a temporary folder
+tmp_file = tempfile('StormData', fileext='.csv.bz2')
+# Download the file
+download.file('https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2', tmp_file, method='curl')
+# Load the file, extracting from the bzip archive on the way
+raw_data = read.csv(bzfile(tmp_file))
+# Show the current state
+str(raw_data)
+```
+
+Further data processing is required, however there are different transformations required for each area of analysis. These additional processing/transformation activities are detailed in the respective sections of this document.
+
+# Analysis
+
+There are two key parts to the analysis:
+
+- Storm event impact on public health
+- Storm event impact on US economy
+
+The data providers classify storm events into 48 categories as defined in the National Weather Service's Storm Data Preparation document available [here](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) (https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf). The raw_data contains several additional event types that are summaries of various kinds, such as per annum total values. For the purpose of this analysis, these 'summary' items have been ignored.
+
+## Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?
+
+The data contains two generalised measures of health impact:
+
+- `FATALITIES`
+- `INJURIES`
+
+It is likely that there is a significant difference in the impact on public health of the `FATALITIES` versus `INJURIES` variables values. In lieu of immediate access to appropriate authoritative research data on this issue, and for the purpose of this analysis, the weight of `FATALITIES` versus `INJURIES` will not be considered and each will be represented separately such that the reader can view the impact in both categories and weight them as desired.
+
+### Step 1: Remove any observations that have NA values in any of the variables `EVTYPE`, `FATALITIES` or `INJURIES`
+
+This analysis will generate a plot that shows:
+
+- Event type versus fatalities
+- Event type versus injuries
+
+```{r clean_data_for_pop_health_analysis }
+# Select on the relevant data points to work with
+pop_health_data = raw_data %>%
+    # Take only the event type (EVTYPE), fatalities count (FATALITIES) and injury count (INJURIES)
+    select(EVTYPE, FATALITIES, INJURIES) %>%
+    # Remove all NA values and EVTYPE values that are summaries
+    filter(!is.na(EVTYPE) & !grepl("^(?i)summary", EVTYPE) & !is.na(FATALITIES) & !is.na(INJURIES))
+# Show the current state
+str(pop_health_data)
+```
+
+### Step 2: Transform the data for plotting
+
+A new data.frame will be created (`pop_health_plot_data`), with variables for:
+
+- event type (`evtype`) - this captures the original Event Type designator from the raw_data
+- impact type (`impact`) - either `fatalities` or `injuries` as appropriate
+- count (`count`) - the sum of all values of the impact type for the event type
+
+The new data.frame will only contain the top 10 event types for each impact type.
+
+```{r transform_data}
+# Create some temporary data.frames
+pop_health_fatalities = data.frame()
+pop_health_injuries = data.frame()
+# Loop over all the event types, filtering for each event and summing the fatalities and injuries separately
+for(type in unique(pop_health_data$EVTYPE)){
+    data = filter(pop_health_data, EVTYPE==type)
+    fatalities = sum(data$FATALITIES)
+    injuries = sum(data$INJURIES)
+    # Update the temporary data.frames to collate the data
+    pop_health_fatalities = rbind(pop_health_fatalities, data.frame(evtype=type, impact='fatalities', count=fatalities))
+    pop_health_injuries = rbind(pop_health_injuries, data.frame(evtype=type, impact='injuries', count=injuries))
+}
+# Generate a new data.frame to hold the final data ready for plotting, subsetting for only the top 10 results for each impact type
+pop_health_plot_data = pop_health_fatalities[order(pop_health_fatalities$count, decreasing=TRUE)[1:10],]
+pop_health_plot_data = rbind(pop_health_plot_data, pop_health_injuries[order(pop_health_injuries$count, decreasing=TRUE)[1:10],])
+# Show the current state
+str(pop_health_plot_data)
+```
+
+### Step 3: Storm Event Impact on Public Health Representation
+
+Figure #1 is a multi-facet plot that separately shows the top storm events that impact upon public health.
+
+```{r pop_health_plot_generation}
+# ggplot used over qplot due to the desire for the coord_flip function (not available in qplot), which tranposes the x and y axis. This is purely aesthetic, and is aimed at making the report more easily consumable.
+ggplot(pop_health_plot_data, aes(x=evtype, y=count, fill=evtype)) + theme(legend.position="none") + geom_bar(stat='identity') + coord_flip() + facet_grid(impact ~ .) + ggtitle("Figure #1: Storm Event Impact to Public Health") + ylab("Storm Event Type") + xlab("Number of Impacts") + scale_y_discrete(breaks=c(seq(0,150000,10000)))
+```
+
+This plot clearly shows that `TORNADO` type events not only take the most life (`r as.integer(filter(pop_health_plot_data, evtype=='TORNADO' & impact=='fatalities')$count)` fatalities), but also cause the greatest injury (`r as.integer(filter(pop_health_plot_data, evtype=='TORNADO' & impact=='injuries')$count)` injuries). This information will be discussed further in the Results section of this document.
+
+## Across the United States, which types of events have the greatest economic consequences?
+
+# Results
+
